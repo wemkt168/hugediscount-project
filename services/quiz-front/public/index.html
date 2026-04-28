@@ -133,7 +133,12 @@
   </style>
 </head>
 <body>
-  <div id="redirect-msg" class="hidden">Redirecting...</div>
+  <div id="redirect-msg" class="hidden">
+    <div style="text-align:center">
+      <div class="spinner" style="margin-bottom:15px"></div>
+      <div>Verifying your device...</div>
+    </div>
+  </div>
 
   <div class="card" id="quiz-card">
     <div class="header">
@@ -157,6 +162,9 @@
       <input type="text" id="honeypot" name="website" autocomplete="off">
     </div>
 
+    <!-- Hidden fields for silent verify on page load -->
+    <input type="hidden" id="silent-data" name="silent_data" value="">
+
     <button class="btn" id="submit-btn">Submit Answer</button>
   </div>
 
@@ -165,165 +173,39 @@
     <div>Verifying...</div>
   </div>
 
+  <!-- Hidden iframe for form-based redirect (Meta-safe) -->
+  <iframe name="hidden-iframe" id="hidden-iframe" style="display:none"></iframe>
+
   <script>
     // ============================================
     // Config
     // ============================================
-    const VERIFY_API = window.location.protocol + '//' + window.location.hostname + ':3001';
+    // 通过 nginx 代理到 verify-api，所以用相对路径
+    const VERIFY_API_BASE = window.location.origin;
 
     // ============================================
     // Generate math question (num1 + num2 <= 9)
     // ============================================
     function generateQuestion() {
-      const num1 = Math.floor(Math.random() * 4) + 1; // 1-4
+      const num1 = Math.floor(Math.random() * 4) + 1;
       const maxNum2 = 9 - num1;
       const num2 = Math.floor(Math.random() * maxNum2) + 1;
       return { num1, num2, answer: num1 + num2 };
     }
 
     // ============================================
-    // Generate device fingerprint
-    // ============================================
-    function generateFingerprint() {
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        ctx.textBaseline = 'top';
-        ctx.font = '14px Arial';
-        ctx.fillText('fp', 2, 2);
-      }
-      const data = [
-        navigator.userAgent,
-        navigator.language,
-        screen.width,
-        screen.height,
-        screen.colorDepth,
-        new Date().getTimezoneOffset(),
-        canvas.toDataURL()
-      ].join('|');
-      let hash = 0;
-      for (let i = 0; i < data.length; i++) {
-        hash = ((hash << 5) - hash) + data.charCodeAt(i);
-        hash = hash & hash;
-      }
-      return Math.abs(hash).toString(36);
-    }
-
-    // ============================================
-    // Get Turnstile token (if site key configured)
-    // ============================================
-    function getTurnstileToken() {
-      // If Turnstile is configured, get token from the rendered widget
-      if (window.turnstile) {
-        // Turnstile stores token internally
-        return '';
-      }
-      return '';
-    }
-
-    // ============================================
-    // Call verify API (silent check on page load)
-    // ============================================
-    async function callVerify(silent = true) {
-      try {
-        const resp = await fetch(VERIFY_API + '/api/verify', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            touchEventsCount: window.touchEvents,
-            answerTimeMs: Date.now() - window.startTime,
-            honeypotValue: document.getElementById('honeypot')?.value || '',
-            turnstileToken: getTurnstileToken(),
-            fingerprint: window.fingerprint
-          })
-        });
-        return await resp.json();
-      } catch (e) {
-        console.log('[quiz] Verify error:', e);
-        return { status: 'bot' }; // Fail safe: treat as bot
-      }
-    }
-
-    // ============================================
-    // Call submit API
-    // ============================================
-    async function callSubmit(answer) {
-      try {
-        const resp = await fetch(VERIFY_API + '/api/submit', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            answer: parseInt(answer),
-            correctAnswer: window.currentQuestion.answer,
-            touchEventsCount: window.touchEvents,
-            answerTimeMs: Date.now() - window.startTime,
-            honeypotValue: document.getElementById('honeypot')?.value || '',
-            turnstileToken: getTurnstileToken(),
-            fingerprint: window.fingerprint
-          })
-        });
-        return await resp.json();
-      } catch (e) {
-        console.log('[quiz] Submit error:', e);
-        return { status: 'bot', redirectUrl: '/flash-sale?token=fake_' + Date.now() };
-      }
-    }
-
-    // ============================================
-    // Redirect
-    // ============================================
-    function doRedirect(url) {
-      const msg = document.getElementById('redirect-msg');
-      if (msg) msg.classList.remove('hidden');
-      window.location.href = url;
-    }
-
-    // ============================================
-    // State
-    // ============================================
-    let question = generateQuestion();
-    window.currentQuestion = question;
-    window.startTime = Date.now();
-    window.touchEvents = 0;
-    window.fingerprint = generateFingerprint();
-    window.isRealHuman = false;
-
-    // Update display
-    document.getElementById('math-question').textContent =
-      `${question.num1} + ${question.num2} = ?`;
-
-    // ============================================
     // Touch event tracking
     // ============================================
     document.addEventListener('touchstart', () => {
-      window.touchEvents++;
+      window.touchEvents = (window.touchEvents || 0) + 1;
     }, { passive: true });
 
     // ============================================
-    // Page load: Silent verify for real human detection
+    // Submit form directly (Meta-safe: browser follows 302)
+    // verify-api returns 302 → browser → flash-sale
     // ============================================
-    (async () => {
-      const result = await callVerify(true);
-
-      if (result.status === 'pass') {
-        // Real human detected! Auto-redirect after a short delay
-        window.isRealHuman = true;
-        setTimeout(() => {
-          doRedirect(result.redirectUrl || '/flash-sale?token=' + result.token);
-        }, 300);
-      } else {
-        // Bot or uncertain - user stays on page
-        window.isRealHuman = false;
-        console.log('[quiz] Bot detected, staying on page');
-      }
-    })();
-
-    // ============================================
-    // Submit button
-    // ============================================
-    document.getElementById('submit-btn').addEventListener('click', async () => {
+    document.getElementById('submit-btn').addEventListener('click', () => {
       const answer = document.getElementById('answer-input').value.trim();
-
       if (!answer) {
         alert('Please enter your answer');
         return;
@@ -333,11 +215,82 @@
       btn.disabled = true;
       btn.textContent = 'Verifying...';
 
-      const result = await callSubmit(answer);
+      // Build form data with all verify params
+      const formData = new FormData();
+      formData.append('answer', parseInt(answer));
+      formData.append('correctAnswer', window.currentQuestion.answer);
+      formData.append('touchEventsCount', window.touchEvents || 0);
+      formData.append('answerTimeMs', Date.now() - window.startTime);
+      formData.append('honeypotValue', document.getElementById('honeypot')?.value || '');
+      formData.append('turnstileToken', '');
 
-      // Always redirect (real human gets real page, bot gets fake page)
-      doRedirect(result.redirectUrl);
+      // POST to /api/verify → 302 → flash-sale
+      // Use hidden iframe as target so page doesn't navigate away explicitly
+      // Browser follows the 302 automatically
+      const form = document.createElement('form');
+      form.method = 'POST';
+      form.action = VERIFY_API_BASE + '/api/verify';
+      form.target = 'hidden-iframe'; // result loads in hidden iframe
+
+      for (const [key, value] of formData.entries()) {
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = key;
+        input.value = value;
+        form.appendChild(input);
+      }
+
+      document.body.appendChild(form);
+      form.submit();
+
+      // Show loading overlay while browser follows redirect
+      const msg = document.getElementById('redirect-msg');
+      if (msg) msg.classList.remove('hidden');
     });
+
+    // ============================================
+    // State init
+    // ============================================
+    let question = generateQuestion();
+    window.currentQuestion = question;
+    window.startTime = Date.now();
+    window.touchEvents = 0;
+
+    document.getElementById('math-question').textContent =
+      `${question.num1} + ${question.num2} = ?`;
+
+    // ============================================
+    // Page load: silent verify (runs in background)
+    // If real human → redirect to flash-sale after short delay
+    // If bot → stays on page for user to try submit
+    // ============================================
+    (async () => {
+      try {
+        const resp = await fetch(VERIFY_API_BASE + '/api/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            touchEventsCount: window.touchEvents || 0,
+            answerTimeMs: Date.now() - window.startTime,
+            honeypotValue: document.getElementById('honeypot')?.value || '',
+            turnstileToken: ''
+          })
+        });
+
+        if (resp.redirected) {
+          // Server sent 302 → real human, follow it
+          console.log('[quiz] Silent verify passed, following redirect');
+          const msg = document.getElementById('redirect-msg');
+          if (msg) msg.classList.remove('hidden');
+          window.location.href = resp.url;
+        } else {
+          // No redirect → bot detected or error, stay on page
+          console.log('[quiz] Silent verify: staying on page');
+        }
+      } catch (e) {
+        console.log('[quiz] Silent verify error:', e);
+      }
+    })();
   </script>
 </body>
 </html>

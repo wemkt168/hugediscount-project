@@ -18,25 +18,46 @@ const FAKE_REDIRECT = process.env.FAKE_REDIRECT || 'https://www.ubuy.com.ph/';
 // 工具函数
 // ============================================
 
-// HMAC 签名
-function hmacSign(data) {
-  return crypto.createHmac('sha256', HMAC_SECRET).update(JSON.stringify(data)).digest('hex');
+// 生成带签名的 token: ts.ip_sig.hex_sig
+// ip_sig = HMAC(ip, secret) 前16字节hex = 32字符
+// hex_sig = HMAC(ts+ip, secret) 完整hex = 64字符
+function generateToken(ip) {
+  const ts = Date.now();
+  const ipSig = crypto.createHmac('sha256', HMAC_SECRET).update(ip).digest('hex').substring(0, 32);
+  const sigData = `${ts}.${ip}`;
+  const hexSig = crypto.createHmac('sha256', HMAC_SECRET).update(sigData).digest('hex');
+  return `${ts}.${ipSig}.${hexSig}`;
 }
 
-// 生成 token（真或假）
-function generateToken(payload) {
-  const data = { ...payload, ts: Date.now() };
-  return hmacSign(data);
+// 验证 token
+function verifyToken(token, clientIP) {
+  if (!token || typeof token !== 'string') return false;
+  const parts = token.split('.');
+  if (parts.length !== 3) return false;
+  const [ts, ipSig, hexSig] = parts;
+
+  // 检查时间戳合理性（5分钟内）
+  const age = Date.now() - parseInt(ts);
+  if (isNaN(parseInt(ts)) || age < 0 || age > 5 * 60 * 1000) return false;
+
+  // 重新计算 ipSig
+  const expectedIpSig = crypto.createHmac('sha256', HMAC_SECRET).update(clientIP).digest('hex').substring(0, 32);
+  if (ipSig !== expectedIpSig) return false;
+
+  // 重新计算 hexSig
+  const sigData = `${ts}.${clientIP}`;
+  const expectedHexSig = crypto.createHmac('sha256', HMAC_SECRET).update(sigData).digest('hex');
+  return hexSig === expectedHexSig;
 }
 
-// 验证 HMAC token 格式（检查签名）
-function verifyHmacToken(token, payload) {
-  const expected = hmacSign({ ...payload, ts: parseInt(token.split(':')[1]) || 0 });
-  // 简化的验证：token 本身是签名前缀
-  return token && token.length === 64;
+// 生成假token（用于bot，给假token让flash-sale识别）
+function generateFakeToken() {
+  return `fake_${crypto.randomBytes(32).toString('hex')}`;
 }
 
-// IP 类型检测 - 只通过 mobile/residential
+// ============================================
+// IP 类型检测
+// ============================================
 async function checkIPType(ip) {
   try {
     const resp = await fetch(`https://ipinfo.io/${ip}?token=${IPINFO_TOKEN}`);
@@ -44,30 +65,25 @@ async function checkIPType(ip) {
     const org = (data.org || '').toLowerCase();
     const hostname = (data.hostname || '').toLowerCase();
 
-    // 数据中心/VPN/Proxy → 拒绝
-    if (org.includes('hosting') || org.includes('cloud') || org.includes('server') ||
-        org.includes('datacenter') || org.includes('vps') || org.includes('aws') ||
-        org.includes('google') || org.includes('microsoft') || org.includes('digital ocean') ||
-        org.includes('vpn') || org.includes('proxy') || hostname.includes('vpn') ||
-        org.includes('cdn') || org.includes('hostinger')) {
-      return 'blocked';
+    const blockedPatterns = [
+      'hosting', 'cloud', 'server', 'datacenter', 'vps', 'aws',
+      'google', 'microsoft', 'digital ocean', 'vpn', 'proxy',
+      'cdn', 'hostinger', 'linode', 'contabo', 'oracle',
+      'OVH', 'scaleway', 'digitalocean'
+    ];
+    for (const p of blockedPatterns) {
+      if (org.includes(p) || hostname.includes(p)) return 'blocked';
     }
-
-    // 移动/住宅 IP → 通过
-    if (org.includes('mobile') || org.includes('cellular') || org.includes('wireless') ||
-        org.includes('isp') || org.includes('broadband') || org.includes('fiber')) {
-      return 'passed';
-    }
-
-    // 默认 → 降级通过（有风险但放过）
     return 'passed';
   } catch (e) {
     console.log('[verify] IP check error:', e.message);
-    return 'passed'; // 网络问题时放行
+    return 'passed'; // 网络问题时放行（避免误杀）
   }
 }
 
+// ============================================
 // Cloudflare Turnstile 验证
+// ============================================
 async function checkTurnstile(token, ip) {
   if (!TURNSTILE_SECRET || !token) return true; // 未配置时跳过
   try {
@@ -88,187 +104,97 @@ async function checkTurnstile(token, ip) {
 // 中间件
 // ============================================
 app.use(cors({
-  origin: '*', // 跨域开放（以后投放多平台）
+  origin: '*',
   methods: ['GET', 'POST', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 app.use(express.json());
 
-// 获取真实 IP
 function getClientIP(req) {
   return req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
          req.headers['cf-connecting-ip'] ||
-         req.socket?.remoteAddress || 'unknown';
+         req.socket?.remoteAddress?.replace('::ffff:', '') ||
+         'unknown';
 }
 
 // ============================================
-// 核心：静默 8 层检验
-// POST /api/verify
+// 核心检验函数（复用）
 // ============================================
-app.post('/api/verify', async (req, res) => {
+async function runChecks(req) {
   const clientIP = getClientIP(req);
   const userAgent = req.headers['user-agent'] || '';
   const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(userAgent);
-
   const {
     touchEventsCount = 0,
     answerTimeMs = 0,
     honeypotValue = '',
-    turnstileToken = '',
-    // 页面上的 HMAC token（防篡改）
-    pageToken = ''
+    turnstileToken = ''
   } = req.body || {};
 
   console.log(`[verify] IP=${clientIP} mobile=${isMobile} touch=${touchEventsCount} time=${answerTimeMs}`);
 
-  // ========== 第1层：IP 类型检测 ==========
+  // L1: IP type
   const ipResult = await checkIPType(clientIP);
   if (ipResult === 'blocked') {
-    console.log('[verify] L1 FAIL: IP blocked');
-    return res.json({ 
-      status: 'bot', 
-      reason: 'ip_blocked',
-      redirectUrl: `/flash-sale?token=fake_${Date.now()}` 
-    });
+    return { pass: false, reason: 'ip_blocked', token: generateFakeToken() };
   }
 
-  // ========== 第2层：设备类型 - 只接受手机 ==========
+  // L2: 设备类型
   if (!isMobile) {
-    console.log('[verify] L2 FAIL: Not mobile');
-    return res.json({ 
-      status: 'bot', 
-      reason: 'desktop',
-      redirectUrl: `/flash-sale?token=fake_${Date.now()}` 
-    });
-  }
-
-  // ========== 第3层：Turnstile 验证 ==========
-  const turnstileOk = await checkTurnstile(turnstileToken, clientIP);
-  if (!turnstileOk) {
-    console.log('[verify] L3 FAIL: Turnstile');
-    return res.json({ 
-      status: 'bot', 
-      reason: 'turnstile',
-      redirectUrl: `/flash-sale?token=fake_${Date.now()}` 
-    });
-  }
-
-  // ========== 第4层：蜜罐检测 ==========
-  if (honeypotValue && honeypotValue.length > 0) {
-    console.log('[verify] L4 FAIL: Honeypot');
-    return res.json({ 
-      status: 'bot', 
-      reason: 'bot',
-      redirectUrl: `/flash-sale?token=fake_${Date.now()}` 
-    });
-  }
-
-  // ========== 第5层：触摸事件检测 ==========
-  if (touchEventsCount < 1) {
-    console.log('[verify] L5 FAIL: No touch');
-    return res.json({ 
-      status: 'bot', 
-      reason: 'no_interaction',
-      redirectUrl: `/flash-sale?token=fake_${Date.now()}` 
-    });
-  }
-
-  // ========== 第6层：答题时间检测 ==========
-  if (answerTimeMs <= 2000) {
-    console.log('[verify] L6 FAIL: Too fast');
-    return res.json({ 
-      status: 'bot', 
-      reason: 'too_fast',
-      redirectUrl: `/flash-sale?token=fake_${Date.now()}` 
-    });
-  }
-
-  // ========== 全部通过 → 真人 ==========
-  console.log('[verify] ALL PASS → REAL HUMAN');
-
-  // 生成真实 HMAC token
-  const tokenPayload = { ip: clientIP, ts: Date.now() };
-  const realToken = generateToken(tokenPayload);
-
-  return res.json({
-    status: 'pass',
-    reason: 'all_passed',
-    token: realToken,
-    redirectUrl: `/flash-sale?token=${realToken}`
-  });
-});
-
-// ============================================
-// 提交答案（真人可以答题并提交）
-// POST /api/submit
-// ============================================
-app.post('/api/submit', async (req, res) => {
-  const clientIP = getClientIP(req);
-  const userAgent = req.headers['user-agent'] || '';
-  const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(userAgent);
-
-  const {
-    answer,
-    correctAnswer,
-    touchEventsCount = 0,
-    answerTimeMs = 0,
-    honeypotValue = '',
-    turnstileToken = '',
-    token // 前面 /api/verify 返回的 token
-  } = req.body || {};
-
-  console.log(`[submit] answer=${answer} token=${token ? token.substring(0, 8) : 'none'}`);
-
-  // ========== 重新做安全检验（一层失败就给假token） ==========
-
-  // L1: IP
-  const ipResult = await checkIPType(clientIP);
-  if (ipResult === 'blocked') {
-    const fakeToken = `fake_${crypto.randomBytes(32).toString('hex')}`;
-    return res.json({ token: fakeToken, redirectUrl: `/flash-sale?token=${fakeToken}` });
-  }
-
-  // L2: 设备
-  if (!isMobile) {
-    const fakeToken = `fake_${crypto.randomBytes(32).toString('hex')}`;
-    return res.json({ token: fakeToken, redirectUrl: `/flash-sale?token=${fakeToken}` });
+    return { pass: false, reason: 'desktop', token: generateFakeToken() };
   }
 
   // L3: Turnstile
   const turnstileOk = await checkTurnstile(turnstileToken, clientIP);
   if (!turnstileOk) {
-    const fakeToken = `fake_${crypto.randomBytes(32).toString('hex')}`;
-    return res.json({ token: fakeToken, redirectUrl: `/flash-sale?token=${fakeToken}` });
+    return { pass: false, reason: 'turnstile', token: generateFakeToken() };
   }
 
   // L4: 蜜罐
   if (honeypotValue && honeypotValue.length > 0) {
-    const fakeToken = `fake_${crypto.randomBytes(32).toString('hex')}`;
-    return res.json({ token: fakeToken, redirectUrl: `/flash-sale?token=${fakeToken}` });
+    return { pass: false, reason: 'honeypot', token: generateFakeToken() };
   }
 
-  // L5: 触摸
+  // L5: 触摸事件
   if (touchEventsCount < 1) {
-    const fakeToken = `fake_${crypto.randomBytes(32).toString('hex')}`;
-    return res.json({ token: fakeToken, redirectUrl: `/flash-sale?token=${fakeToken}` });
+    return { pass: false, reason: 'no_interaction', token: generateFakeToken() };
   }
 
   // L6: 答题时间
   if (answerTimeMs <= 2000) {
-    const fakeToken = `fake_${crypto.randomBytes(32).toString('hex')}`;
-    return res.json({ token: fakeToken, redirectUrl: `/flash-sale?token=${fakeToken}` });
+    return { pass: false, reason: 'too_fast', token: generateFakeToken() };
   }
 
-  // ========== 全部通过 → 真 token ==========
-  const tokenPayload = { ip: clientIP, ts: Date.now() };
-  const realToken = generateToken(tokenPayload);
+  return { pass: true, reason: 'all_passed', token: generateToken(clientIP) };
+}
 
-  console.log('[submit] REAL TOKEN GENERATED');
+// ============================================
+// POST /api/verify
+// 静默检查 + 302 重定向到 flash-sale
+// Meta只看到: POST → 302 → GET /flash-sale
+// ============================================
+app.post('/api/verify', async (req, res) => {
+  const result = await runChecks(req);
 
-  return res.json({
-    token: realToken,
-    redirectUrl: `/flash-sale?token=${realToken}`
-  });
+  if (result.pass) {
+    console.log('[verify] PASS → redirect to flash-sale?token=REAL');
+    res.redirect(302, `/flash-sale?token=${result.token}`);
+  } else {
+    console.log(`[verify] FAIL (${result.reason}) → redirect to flash-sale?token=FAKE`);
+    res.redirect(302, `/flash-sale?token=${result.token}`);
+  }
+});
+
+// ============================================
+// GET /flash-sale
+// 内部转发：由 nginx 代理到 flash-sale 服务
+// ============================================
+app.get('/flash-sale', (req, res) => {
+  const { token } = req.query;
+  if (!token) {
+    return res.redirect(FAKE_REDIRECT);
+  }
+  res.redirect(`/flash-sale?token=${token}`);
 });
 
 // ============================================
