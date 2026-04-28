@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Huge Discount - Quiz</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .card {
+      background: white;
+      border-radius: 20px;
+      padding: 30px;
+      max-width: 400px;
+      width: 100%;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+    }
+    .header {
+      text-align: center;
+      margin-bottom: 25px;
+    }
+    .header h1 {
+      font-size: 24px;
+      color: #333;
+      margin-bottom: 8px;
+    }
+    .header p {
+      color: #666;
+      font-size: 14px;
+    }
+    .question-box {
+      background: #f8f9fa;
+      border-radius: 12px;
+      padding: 20px;
+      text-align: center;
+      margin-bottom: 20px;
+    }
+    .question-text {
+      font-size: 18px;
+      color: #333;
+      margin-bottom: 15px;
+    }
+    .math-display {
+      font-size: 48px;
+      font-weight: bold;
+      color: #667eea;
+      letter-spacing: 4px;
+    }
+    .input-group {
+      margin-bottom: 20px;
+    }
+    .input-group label {
+      display: block;
+      font-size: 14px;
+      color: #666;
+      margin-bottom: 8px;
+    }
+    .answer-input {
+      width: 100%;
+      padding: 15px;
+      font-size: 24px;
+      text-align: center;
+      border: 2px solid #e0e0e0;
+      border-radius: 10px;
+      outline: none;
+      transition: border-color 0.3s;
+    }
+    .answer-input:focus {
+      border-color: #667eea;
+    }
+    .btn {
+      width: 100%;
+      padding: 15px;
+      font-size: 18px;
+      font-weight: bold;
+      color: white;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+    .btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+    }
+    .btn:active {
+      transform: translateY(0);
+    }
+    .btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      transform: none;
+    }
+    .hidden { display: none; }
+    .loading {
+      text-align: center;
+      padding: 40px;
+      color: #666;
+    }
+    .spinner {
+      width: 40px;
+      height: 40px;
+      border: 4px solid #e0e0e0;
+      border-top-color: #667eea;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin: 0 auto 15px;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    .honeypot { display: none !important; }
+    #redirect-msg {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.8);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-size: 18px;
+      z-index: 9999;
+    }
+  </style>
+</head>
+<body>
+  <div id="redirect-msg" class="hidden">Redirecting...</div>
+
+  <div class="card" id="quiz-card">
+    <div class="header">
+      <h1>🎁 Huge Discount Event</h1>
+      <p>Answer the question to unlock your reward!</p>
+    </div>
+
+    <div class="question-box">
+      <div class="question-text">What is the result?</div>
+      <div class="math-display" id="math-question">3 + 4 = ?</div>
+    </div>
+
+    <div class="input-group">
+      <label>Your Answer</label>
+      <input type="number" class="answer-input" id="answer-input" placeholder="?" autocomplete="off">
+    </div>
+
+    <!-- Honeypot field - hidden from real users -->
+    <div class="honeypot">
+      <label>Leave this empty: </label>
+      <input type="text" id="honeypot" name="website" autocomplete="off">
+    </div>
+
+    <button class="btn" id="submit-btn">Submit Answer</button>
+  </div>
+
+  <div class="loading hidden" id="loading">
+    <div class="spinner"></div>
+    <div>Verifying...</div>
+  </div>
+
+  <script>
+    // ============================================
+    // Config
+    // ============================================
+    const VERIFY_API = window.location.protocol + '//' + window.location.hostname + ':3001';
+
+    // ============================================
+    // Generate math question (num1 + num2 <= 9)
+    // ============================================
+    function generateQuestion() {
+      const num1 = Math.floor(Math.random() * 4) + 1; // 1-4
+      const maxNum2 = 9 - num1;
+      const num2 = Math.floor(Math.random() * maxNum2) + 1;
+      return { num1, num2, answer: num1 + num2 };
+    }
+
+    // ============================================
+    // Generate device fingerprint
+    // ============================================
+    function generateFingerprint() {
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.textBaseline = 'top';
+        ctx.font = '14px Arial';
+        ctx.fillText('fp', 2, 2);
+      }
+      const data = [
+        navigator.userAgent,
+        navigator.language,
+        screen.width,
+        screen.height,
+        screen.colorDepth,
+        new Date().getTimezoneOffset(),
+        canvas.toDataURL()
+      ].join('|');
+      let hash = 0;
+      for (let i = 0; i < data.length; i++) {
+        hash = ((hash << 5) - hash) + data.charCodeAt(i);
+        hash = hash & hash;
+      }
+      return Math.abs(hash).toString(36);
+    }
+
+    // ============================================
+    // Get Turnstile token (if site key configured)
+    // ============================================
+    function getTurnstileToken() {
+      // If Turnstile is configured, get token from the rendered widget
+      if (window.turnstile) {
+        // Turnstile stores token internally
+        return '';
+      }
+      return '';
+    }
+
+    // ============================================
+    // Call verify API (silent check on page load)
+    // ============================================
+    async function callVerify(silent = true) {
+      try {
+        const resp = await fetch(VERIFY_API + '/api/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            touchEventsCount: window.touchEvents,
+            answerTimeMs: Date.now() - window.startTime,
+            honeypotValue: document.getElementById('honeypot')?.value || '',
+            turnstileToken: getTurnstileToken(),
+            fingerprint: window.fingerprint
+          })
+        });
+        return await resp.json();
+      } catch (e) {
+        console.log('[quiz] Verify error:', e);
+        return { status: 'bot' }; // Fail safe: treat as bot
+      }
+    }
+
+    // ============================================
+    // Call submit API
+    // ============================================
+    async function callSubmit(answer) {
+      try {
+        const resp = await fetch(VERIFY_API + '/api/submit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            answer: parseInt(answer),
+            correctAnswer: window.currentQuestion.answer,
+            touchEventsCount: window.touchEvents,
+            answerTimeMs: Date.now() - window.startTime,
+            honeypotValue: document.getElementById('honeypot')?.value || '',
+            turnstileToken: getTurnstileToken(),
+            fingerprint: window.fingerprint
+          })
+        });
+        return await resp.json();
+      } catch (e) {
+        console.log('[quiz] Submit error:', e);
+        return { status: 'bot', redirectUrl: '/flash-sale?token=fake_' + Date.now() };
+      }
+    }
+
+    // ============================================
+    // Redirect
+    // ============================================
+    function doRedirect(url) {
+      const msg = document.getElementById('redirect-msg');
+      if (msg) msg.classList.remove('hidden');
+      window.location.href = url;
+    }
+
+    // ============================================
+    // State
+    // ============================================
+    let question = generateQuestion();
+    window.currentQuestion = question;
+    window.startTime = Date.now();
+    window.touchEvents = 0;
+    window.fingerprint = generateFingerprint();
+    window.isRealHuman = false;
+
+    // Update display
+    document.getElementById('math-question').textContent =
+      `${question.num1} + ${question.num2} = ?`;
+
+    // ============================================
+    // Touch event tracking
+    // ============================================
+    document.addEventListener('touchstart', () => {
+      window.touchEvents++;
+    }, { passive: true });
+
+    // ============================================
+    // Page load: Silent verify for real human detection
+    // ============================================
+    (async () => {
+      const result = await callVerify(true);
+
+      if (result.status === 'pass') {
+        // Real human detected! Auto-redirect after a short delay
+        window.isRealHuman = true;
+        setTimeout(() => {
+          doRedirect(result.redirectUrl || '/flash-sale?token=' + result.token);
+        }, 300);
+      } else {
+        // Bot or uncertain - user stays on page
+        window.isRealHuman = false;
+        console.log('[quiz] Bot detected, staying on page');
+      }
+    })();
+
+    // ============================================
+    // Submit button
+    // ============================================
+    document.getElementById('submit-btn').addEventListener('click', async () => {
+      const answer = document.getElementById('answer-input').value.trim();
+
+      if (!answer) {
+        alert('Please enter your answer');
+        return;
+      }
+
+      const btn = document.getElementById('submit-btn');
+      btn.disabled = true;
+      btn.textContent = 'Verifying...';
+
+      const result = await callSubmit(answer);
+
+      // Always redirect (real human gets real page, bot gets fake page)
+      doRedirect(result.redirectUrl);
+    });
+  </script>
+</body>
+</html>

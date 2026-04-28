@@ -1,0 +1,12 @@
+{
+  "name": "hugediscount-project",
+  "version": "1.0.0",
+  "description": "HugeDiscount Quiz + Verify API + Flash-sale system",
+  "private": true,
+  "scripts": {
+    "install:all": "cd services/quiz-front && npm install && cd ../verify-api && npm install && cd ../flash-sale && npm install",
+    "start:quiz": "cd services/quiz-front && npm start",
+    "start:verify": "cd services/verify-api && npm start",
+    "start:flash": "cd services/flash-sale && npm start"
+  }
+}

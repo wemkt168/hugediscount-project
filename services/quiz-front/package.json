@@ -1,0 +1,13 @@
+{
+  "name": "quiz-front",
+  "version": "1.0.0",
+  "description": "Quiz page - simple static server",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+}
