@@ -137,23 +137,23 @@
   <div id="redirect-msg" class="hidden">
     <div style="text-align:center">
       <div class="spinner" style="margin-bottom:15px"></div>
-      <div>Verifying your device...</div>
+      <div id="redirect-text"></div>
     </div>
   </div>
 
   <div class="card" id="quiz-card">
     <div class="header">
-      <h1>🎁 Huge Discount Event</h1>
-      <p>Answer the question to unlock your reward!</p>
+      <h1>🎁 <span id="i18n-title">Huge Discount Event</span></h1>
+      <p id="i18n-subtitle">Answer the question to unlock your reward!</p>
     </div>
 
     <div class="question-box">
-      <div class="question-text">What is the result?</div>
+      <div class="question-text" id="i18n-question-text">What is the result?</div>
       <div class="math-display" id="math-question">3 + 4 = ?</div>
     </div>
 
     <div class="input-group">
-      <label>Your Answer</label>
+      <label id="i18n-answer-label">Your Answer</label>
       <input type="number" class="answer-input" id="answer-input" placeholder="?" autocomplete="off">
     </div>
 
@@ -166,12 +166,12 @@
     <!-- Hidden fields for silent verify on page load -->
     <input type="hidden" id="silent-data" name="silent_data" value="">
 
-    <button class="btn" id="submit-btn">Submit Answer</button>
+    <button class="btn" id="submit-btn" data-i18n="submit">Submit Answer</button>
   </div>
 
   <div class="loading hidden" id="loading">
     <div class="spinner"></div>
-    <div>Verifying...</div>
+    <div id="loading-text"></div>
   </div>
 
   <!-- Hidden iframe for form-based redirect (Meta-safe) -->
@@ -184,18 +184,82 @@
     // ============================================
     // Config
     // ============================================
-    // 通过 nginx 代理到 verify-api，所以用相对路径
     const VERIFY_API_BASE = window.location.origin;
     const TURNSTILE_SITE_KEY = '0x4AAAAAADFnhqXNOyjaRrQ4';
 
     // ============================================
-    // Turnstile Invisible Widget（用户无感知）
+    // Multilingual — auto-detect browser language
+    // Fallback: English (when lang not in supported list)
+    // ============================================
+    const I18N = {
+      en: {
+        title: 'Huge Discount Event',
+        subtitle: 'Answer the question to unlock your reward!',
+        questionText: 'What is the result?',
+        answerLabel: 'Your Answer',
+        submitBtn: 'Submit Answer',
+        pleaseEnter: 'Please enter your answer',
+        verifying: 'Verifying...',
+        redirecting: 'Redirecting...',
+      },
+      'zh-Hans': {
+        title: '🎁 超大折扣活动',
+        subtitle: '回答问题，解锁您的奖励！',
+        questionText: '结果是？',
+        answerLabel: '您的答案',
+        submitBtn: '提交答案',
+        pleaseEnter: '请输入您的答案',
+        verifying: '验证中...',
+        redirecting: '正在跳转...',
+      },
+      vi: {
+        title: '🎁 Sự Kiện Giảm Giá Lớn',
+        subtitle: 'Trả lời câu hỏi để mở khóa phần thưởng của bạn!',
+        questionText: 'Kết quả là gì?',
+        answerLabel: 'Câu Trả Lời Của Bạn',
+        submitBtn: 'Gửi Câu Trả Lời',
+        pleaseEnter: 'Vui lòng nhập câu trả lời của bạn',
+        verifying: 'Đang xác minh...',
+        redirecting: 'Đang chuyển hướng...',
+      }
+    };
+
+    function getLang() {
+      const lang = navigator.language || navigator.userLanguage || 'en';
+      // Exact match
+      if (I18N[lang]) return lang;
+      // Primary tag match (e.g. "zh-CN" → "zh-Hans")
+      const primary = lang.split('-')[0];
+      if (primary === 'zh') return 'zh-Hans';
+      if (primary === 'vi') return 'vi';
+      return 'en';
+    }
+
+    function applyI18n() {
+      const lang = getLang();
+      const t = I18N[lang];
+      document.getElementById('i18n-title').textContent = t.title;
+      document.getElementById('i18n-subtitle').textContent = t.subtitle;
+      document.getElementById('i18n-question-text').textContent = t.questionText;
+      document.getElementById('i18n-answer-label').textContent = t.answerLabel;
+      const btn = document.getElementById('submit-btn');
+      btn.textContent = t.submitBtn;
+      btn.dataset.i18n = t.submitBtn;
+      document.getElementById('redirect-text').textContent = t.redirecting;
+      document.getElementById('loading-text').textContent = t.verifying;
+      // Update placeholder
+      document.title = lang === 'zh-Hans' ? '超大折扣 - 答题'
+        : lang === 'vi' ? 'Giảm Giá Lớn - Câu Hỏi'
+        : 'Huge Discount - Quiz';
+    }
+
+    // ============================================
+    // Turnstile Invisible Widget
     // ============================================
     window.turnstileToken = '';
 
     function initTurnstile() {
       if (typeof window.turnstile === 'undefined') {
-        // Turnstile JS 未加载完成，延迟重试
         setTimeout(initTurnstile, 200);
         return;
       }
@@ -218,7 +282,6 @@
       });
     }
 
-    // 页面加载时立即初始化 Turnstile（异步，不阻塞页面渲染）
     initTurnstile();
 
     // ============================================
@@ -239,26 +302,24 @@
     }, { passive: true });
 
     // ============================================
-    // Submit form directly (Meta-safe: browser follows 302)
+    // Submit form (Meta-safe: browser follows 302)
     // verify-api returns 302 → browser → flash-sale
     // ============================================
     document.getElementById('submit-btn').addEventListener('click', () => {
       const answer = document.getElementById('answer-input').value.trim();
       if (!answer) {
-        alert('Please enter your answer');
+        alert(I18N[getLang()].pleaseEnter);
         return;
       }
 
       const btn = document.getElementById('submit-btn');
       btn.disabled = true;
-      btn.textContent = 'Verifying...';
+      btn.textContent = I18N[getLang()].verifying;
 
-      // 获取 Turnstile token（invisible 模式：render 已等待验证完成）
       const turnstileToken = (window.turnstile && window.turnstile.getResponse)
         ? window.turnstile.getResponse()
         : (window.turnstileToken || '');
 
-      // Build form data with all verify params
       const formData = new FormData();
       formData.append('answer', parseInt(answer));
       formData.append('correctAnswer', window.currentQuestion.answer);
@@ -267,13 +328,10 @@
       formData.append('honeypotValue', document.getElementById('honeypot')?.value || '');
       formData.append('turnstileToken', turnstileToken);
 
-      // POST to /api/verify → 302 → flash-sale
-      // Use hidden iframe as target so page doesn't navigate away explicitly
-      // Browser follows the 302 automatically
       const form = document.createElement('form');
       form.method = 'POST';
       form.action = VERIFY_API_BASE + '/api/verify';
-      form.target = 'hidden-iframe'; // result loads in hidden iframe
+      form.target = 'hidden-iframe';
 
       for (const [key, value] of formData.entries()) {
         const input = document.createElement('input');
@@ -286,7 +344,7 @@
       document.body.appendChild(form);
       form.submit();
 
-      // Show loading overlay while browser follows redirect
+      // Show redirect overlay
       const msg = document.getElementById('redirect-msg');
       if (msg) msg.classList.remove('hidden');
     });
@@ -302,39 +360,8 @@
     document.getElementById('math-question').textContent =
       `${question.num1} + ${question.num2} = ?`;
 
-    // ============================================
-    // Page load: silent verify (runs in background)
-    // Turnstile token 可能在 1-5 秒后才生成，静默验证时可能还没有
-    // 如果静默验证时无 token → L3 失败 → 留在答题页（正常，体验不受影响）
-    // 用户点击提交时 widget 已完成 → 带 token 提交 → 真人通过
-    // ============================================
-    (async () => {
-      try {
-        const resp = await fetch(VERIFY_API_BASE + '/api/verify', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            touchEventsCount: window.touchEvents || 0,
-            answerTimeMs: Date.now() - window.startTime,
-            honeypotValue: document.getElementById('honeypot')?.value || '',
-            turnstileToken: window.turnstileToken || ''
-          })
-        });
-
-        if (resp.redirected) {
-          // Server sent 302 → real human, follow it
-          console.log('[quiz] Silent verify passed, following redirect');
-          const msg = document.getElementById('redirect-msg');
-          if (msg) msg.classList.remove('hidden');
-          window.location.href = resp.url;
-        } else {
-          // No redirect → bot detected or error, stay on page
-          console.log('[quiz] Silent verify: staying on page');
-        }
-      } catch (e) {
-        console.log('[quiz] Silent verify error:', e);
-      }
-    })();
+    // Apply multilingual AFTER state init so text overrides correctly
+    applyI18n();
   </script>
 </body>
 </html>
