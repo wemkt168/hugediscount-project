@@ -133,8 +133,14 @@ async function runChecks(req) {
     touchEventsCount = 0,
     answerTimeMs = 0,
     honeypotValue = '',
-    turnstileToken = ''
+    turnstileToken = '',
+    answer,          // 提交答案时有，静默验证时无
+    correctAnswer    // 提交答案时有，静默验证时无
   } = req.body || {};
+
+  // 静默验证：页面加载后立即发起（无答案），跳过 L6 答题时间检验
+  // 用户提交：有点击动作，不跳过 L6
+  const isSilent = (answer === undefined && correctAnswer === undefined);
 
   console.log(`[verify] IP=${clientIP} mobile=${isMobile} touch=${touchEventsCount} time=${answerTimeMs}`);
 
@@ -165,8 +171,8 @@ async function runChecks(req) {
     return { pass: false, reason: 'no_interaction', token: generateFakeToken() };
   }
 
-  // L6: 答题时间
-  if (answerTimeMs <= 2000) {
+  // L6: 答题时间（静默验证时跳过，因为页面刚加载还没看题）
+  if (!isSilent && answerTimeMs <= 2000) {
     return { pass: false, reason: 'too_fast', token: generateFakeToken() };
   }
 
