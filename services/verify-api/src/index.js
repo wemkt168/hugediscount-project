@@ -82,10 +82,15 @@ async function checkIPType(ip) {
 }
 
 // ============================================
-// Cloudflare Turnstile 验证
+// Cloudflare Turnstile 验证（强制，不跳过）
 // ============================================
 async function checkTurnstile(token, ip) {
-  if (!TURNSTILE_SECRET || !token) return true; // 未配置时跳过
+  // 无 token → 直接判定为机器人（不跳过验证）
+  if (!token) return false;
+  if (!TURNSTILE_SECRET) {
+    console.log('[verify] Turnstile secret not configured, rejecting request');
+    return false;
+  }
   try {
     const resp = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
       method: 'POST',
@@ -96,7 +101,7 @@ async function checkTurnstile(token, ip) {
     return data.success === true;
   } catch (e) {
     console.log('[verify] Turnstile error:', e.message);
-    return true;
+    return false; // 网络错误也拒绝，不放过
   }
 }
 

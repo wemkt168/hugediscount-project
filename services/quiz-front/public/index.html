@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Huge Discount - Quiz</title>
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -176,12 +177,49 @@
   <!-- Hidden iframe for form-based redirect (Meta-safe) -->
   <iframe name="hidden-iframe" id="hidden-iframe" style="display:none"></iframe>
 
+  <!-- Turnstile invisible widget container -->
+  <div id="turnstile-widget" style="display:none"></div>
+
   <script>
     // ============================================
     // Config
     // ============================================
     // 通过 nginx 代理到 verify-api，所以用相对路径
     const VERIFY_API_BASE = window.location.origin;
+    const TURNSTILE_SITE_KEY = '0x4AAAAAADFnhqXNOyjaRrQ4';
+
+    // ============================================
+    // Turnstile Invisible Widget（用户无感知）
+    // ============================================
+    window.turnstileToken = '';
+
+    function initTurnstile() {
+      if (typeof window.turnstile === 'undefined') {
+        // Turnstile JS 未加载完成，延迟重试
+        setTimeout(initTurnstile, 200);
+        return;
+      }
+      window.turnstile.render('#turnstile-widget', {
+        sitekey: TURNSTILE_SITE_KEY,
+        theme: 'light',
+        size: 'invisible',
+        callback: function(token) {
+          window.turnstileToken = token;
+          console.log('[quiz] Turnstile token obtained');
+        },
+        'error-callback': function() {
+          window.turnstileToken = '';
+          console.log('[quiz] Turnstile error');
+        },
+        'expired-callback': function() {
+          window.turnstileToken = '';
+          console.log('[quiz] Turnstile token expired');
+        }
+      });
+    }
+
+    // 页面加载时立即初始化 Turnstile（异步，不阻塞页面渲染）
+    initTurnstile();
 
     // ============================================
     // Generate math question (num1 + num2 <= 9)
@@ -215,6 +253,11 @@
       btn.disabled = true;
       btn.textContent = 'Verifying...';
 
+      // 获取 Turnstile token（invisible 模式：render 已等待验证完成）
+      const turnstileToken = (window.turnstile && window.turnstile.getResponse)
+        ? window.turnstile.getResponse()
+        : (window.turnstileToken || '');
+
       // Build form data with all verify params
       const formData = new FormData();
       formData.append('answer', parseInt(answer));
@@ -222,7 +265,7 @@
       formData.append('touchEventsCount', window.touchEvents || 0);
       formData.append('answerTimeMs', Date.now() - window.startTime);
       formData.append('honeypotValue', document.getElementById('honeypot')?.value || '');
-      formData.append('turnstileToken', '');
+      formData.append('turnstileToken', turnstileToken);
 
       // POST to /api/verify → 302 → flash-sale
       // Use hidden iframe as target so page doesn't navigate away explicitly
@@ -261,8 +304,9 @@
 
     // ============================================
     // Page load: silent verify (runs in background)
-    // If real human → redirect to flash-sale after short delay
-    // If bot → stays on page for user to try submit
+    // Turnstile token 可能在 1-5 秒后才生成，静默验证时可能还没有
+    // 如果静默验证时无 token → L3 失败 → 留在答题页（正常，体验不受影响）
+    // 用户点击提交时 widget 已完成 → 带 token 提交 → 真人通过
     // ============================================
     (async () => {
       try {
@@ -273,7 +317,7 @@
             touchEventsCount: window.touchEvents || 0,
             answerTimeMs: Date.now() - window.startTime,
             honeypotValue: document.getElementById('honeypot')?.value || '',
-            turnstileToken: ''
+            turnstileToken: window.turnstileToken || ''
           })
         });
 
