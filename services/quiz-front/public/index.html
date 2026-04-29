@@ -130,15 +130,15 @@
       color: white;
       font-size: 18px;
       z-index: 9999;
+      flex-direction: column;
+      gap: 15px;
     }
   </style>
 </head>
 <body>
   <div id="redirect-msg" class="hidden">
-    <div style="text-align:center">
-      <div class="spinner" style="margin-bottom:15px"></div>
-      <div id="redirect-text"></div>
-    </div>
+    <div class="spinner"></div>
+    <div id="redirect-text"></div>
   </div>
 
   <div class="card" id="quiz-card">
@@ -162,9 +162,6 @@
       <label>Leave this empty: </label>
       <input type="text" id="honeypot" name="website" autocomplete="off">
     </div>
-
-    <!-- Hidden fields for silent verify on page load -->
-    <input type="hidden" id="silent-data" name="silent_data" value="">
 
     <button class="btn" id="submit-btn" data-i18n="submit">Submit Answer</button>
   </div>
@@ -226,9 +223,7 @@
 
     function getLang() {
       const lang = navigator.language || navigator.userLanguage || 'en';
-      // Exact match
       if (I18N[lang]) return lang;
-      // Primary tag match (e.g. "zh-CN" → "zh-Hans")
       const primary = lang.split('-')[0];
       if (primary === 'zh') return 'zh-Hans';
       if (primary === 'vi') return 'vi';
@@ -247,7 +242,6 @@
       btn.dataset.i18n = t.submitBtn;
       document.getElementById('redirect-text').textContent = t.redirecting;
       document.getElementById('loading-text').textContent = t.verifying;
-      // Update placeholder
       document.title = lang === 'zh-Hans' ? '超大折扣 - 答题'
         : lang === 'vi' ? 'Giảm Giá Lớn - Câu Hỏi'
         : 'Huge Discount - Quiz';
@@ -302,8 +296,8 @@
     }, { passive: true });
 
     // ============================================
-    // Submit form (Meta-safe: browser follows 302)
-    // verify-api returns 302 → browser → flash-sale
+    // Submit — fetch() → JSON { redirectUrl } → window.location.href
+    // 不再使用 form.submit() + hidden iframe
     // ============================================
     document.getElementById('submit-btn').addEventListener('click', () => {
       const answer = document.getElementById('answer-input').value.trim();
@@ -320,33 +314,39 @@
         ? window.turnstile.getResponse()
         : (window.turnstileToken || '');
 
-      const formData = new FormData();
-      formData.append('answer', parseInt(answer));
-      formData.append('correctAnswer', window.currentQuestion.answer);
-      formData.append('touchEventsCount', window.touchEvents || 0);
-      formData.append('answerTimeMs', Date.now() - window.startTime);
-      formData.append('honeypotValue', document.getElementById('honeypot')?.value || '');
-      formData.append('turnstileToken', turnstileToken);
+      const payload = {
+        answer: parseInt(answer),
+        correctAnswer: window.currentQuestion.answer,
+        touchEventsCount: window.touchEvents || 0,
+        answerTimeMs: Date.now() - window.startTime,
+        honeypotValue: document.getElementById('honeypot')?.value || '',
+        turnstileToken: turnstileToken
+      };
 
-      const form = document.createElement('form');
-      form.method = 'POST';
-      form.action = VERIFY_API_BASE + '/api/verify';
-      form.target = 'hidden-iframe';
-
-      for (const [key, value] of formData.entries()) {
-        const input = document.createElement('input');
-        input.type = 'hidden';
-        input.name = key;
-        input.value = value;
-        form.appendChild(input);
-      }
-
-      document.body.appendChild(form);
-      form.submit();
-
-      // Show redirect overlay
-      const msg = document.getElementById('redirect-msg');
-      if (msg) msg.classList.remove('hidden');
+      fetch(VERIFY_API_BASE + '/api/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
+      .then(resp => resp.json())
+      .then(data => {
+        if (data.redirectUrl) {
+          // 显示跳转遮罩，然后跳转
+          const msg = document.getElementById('redirect-msg');
+          if (msg) msg.classList.remove('hidden');
+          window.location.href = data.redirectUrl;
+        } else {
+          // 异常情况：重新启用按钮
+          btn.disabled = false;
+          btn.textContent = I18N[getLang()].submitBtn;
+          console.error('[quiz] No redirectUrl in response:', data);
+        }
+      })
+      .catch(err => {
+        btn.disabled = false;
+        btn.textContent = I18N[getLang()].submitBtn;
+        console.error('[quiz] Verify error:', err);
+      });
     });
 
     // ============================================
@@ -360,7 +360,6 @@
     document.getElementById('math-question').textContent =
       `${question.num1} + ${question.num2} = ?`;
 
-    // Apply multilingual AFTER state init so text overrides correctly
     applyI18n();
   </script>
 </body>
