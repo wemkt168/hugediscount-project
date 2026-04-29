@@ -97,37 +97,31 @@ GET /flash-sale?token=xxx
 
 ### Phase 1: verify-api 改造（7层检验修正）
 
-- [ ] **L1 IP类型检测重构**：改用 IPinfo `type` 字段（mobile/residential），而非 org 关键词匹配
-  - IPinfo API: `https://ipinfo.io/${ip}?token=xxx` → 解析 `data.type`
-  - 拦截：hosting, datacenter, vpn, proxy, cdn, cloud
-  - 通过：mobile, isp, residential
-- [ ] **L3 Turnstile强制验证**：移除 `TURNSTILE_SECRET` 为空时跳过的逻辑，改为验证失败=机器人
-- [ ] **静默验证区分**：静默（无答案）时跳过 L6 答题时间检验，保留其他6层
-- [ ] **HMAC Token结构**：`${timestamp}.${ipSig}.${hexSig}`（64+32+64=160字符）
-  - `ipSig` = HMAC(ip, secret).digest('hex').substring(0, 32)
-  - `hexSig` = HMAC(`${ts}.${ip}`, secret).digest('hex')
-  - 时间戳窗口：5分钟
-- [ ] **假token生成**：`fake_${crypto.randomBytes(32).toString('hex')}`
+- [x] **L1 IP类型检测**：org关键词匹配（当前可用，type字段需付费IPinfo）
+- [x] **L3 Turnstile强制验证**：无token/无secret/网络错误均拒绝
+- [x] **静默验证跳过L6**：静默验证（无答案）跳过答题时间检验，用户提交时保留L6
+- [x] **HMAC Token结构**：`${timestamp}.${ipSig}.${hexSig}`（64+32+64=160字符）
+- [x] **假token生成**：`fake_${crypto.randomBytes(32).toString('hex')}`
 
 ### Phase 2: quiz-front 改造（Turnstile集成 + 静默验证）
 
-- [ ] **Cloudflare Turnstile集成**：前端加载 Turnstile JS，验证后获取 token 随请求发送
-- [ ] **静默验证流程**：页面加载立即 POST /api/verify，跟踪 touch 事件和页面停留时间
-- [ ] **静默成功处理**：若 7层全过（真人），静默验证返回 302，页面立即跳转（用户无感）
-- [ ] **静默失败处理**：若任一层失败，无跳转，用户留在答题页（正常体验）
-- [ ] **跨域 POST 处理**：flash-sale 验证需在服务器端做 302，浏览器 follow
+- [x] **Cloudflare Turnstile集成**：前端加载 Turnstile Invisible JS，页面加载时初始化
+- [x] **静默验证流程**：页面加载立即 POST /api/verify（无答案），跟踪 touch 事件
+- [x] **静默成功处理**：若7层全过（真人），静默验证返回302，页面立即跳转
+- [x] **静默失败处理**：若任一层失败，无跳转，用户留在答题页（正常体验）
+- [x] **跨域 POST 处理**：服务端302跳转，浏览器follow
 
-### Phase 3: flash-sale 验证（预期无需改动）
+### Phase 3: flash-sale 验证
 
-- [ ] 确认 HMAC 验证逻辑正确（已完整）
-- [ ] 确认 302 跳转对浏览器不可见（服务端跳转）
-- [ ] 确认 IP 绑定验证（token 与请求 IP 绑定）
+- [x] **HMAC 验证逻辑完整**：fake_前缀拒绝 + 5分钟窗口 + IP签名 + HMAC签名
+- [x] **302跳转正确**：真token→win04.xyz，假token→ubuy.com.ph
+- [x] **IP绑定验证**：HMAC计算包含clientIP，token不可跨IP使用
 
 ### Phase 4: 部署与测试
 
-- [ ] GitHub 提交代码变更
-- [ ] Zeabur 自动部署（已配置 GitHub source）
-- [ ] 手动测试矩阵：
+- [x] GitHub 提交代码变更（commit a55f114）
+- [x] Zeabur 自动部署（已配置 GitHub source）
+- [ ] 手动测试矩阵（需人工操作）：
   - [ ] 手机真机 → 静默验证 → 自动跳转 win04.xyz
   - [ ] 手机真机 → 答题提交 → win04.xyz
   - [ ] 桌面浏览器 → 静默验证失败 → 留在答题页
@@ -136,13 +130,13 @@ GET /flash-sale?token=xxx
   - [ ] VPN IP → ubuy.com.ph
 - [ ] Meta 广告投放测试（确认不触发审核）
 
-## 当前代码状态（2026-04-29）
+## 当前代码状态（2026-04-29 18:45）
 
 | 文件 | 状态 | 说明 |
 |------|------|------|
-| `verify-api/src/index.js` | ⚠️ 需改造 | L1用org关键词、L3会跳过 |
-| `flash-sale/src/index.js` | ✅ 完整 | HMAC验证正确 |
-| `quiz-front/public/index.html` | ⚠️ 需改造 | 无Turnstile、静默验证逻辑需确认 |
+| `verify-api/src/index.js` | ✅ 完成 | L1-L7完整检验，静默跳过L6 |
+| `flash-sale/src/index.js` | ✅ 完整 | HMAC验证正确，302跳转正确 |
+| `quiz-front/public/index.html` | ✅ 完成 | Turnstile Invisible集成，静默验证 |
 | `quiz-front/src/index.js` | ✅ 可用 | Express静态服务 |
 
 ## Zeabur 服务状态
