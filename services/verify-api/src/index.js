@@ -8,7 +8,7 @@ const PORT = process.env.PORT || 3001;
 // ============================================
 // 环境变量（从 Zeabur 或 .env 注入）
 // ============================================
-const IPINFO_TOKEN = process.env.IPINFO_API_KEY || '6e4fa2b8a2f48f';
+const IPAPI_IS_KEY = process.env.IPAPI_IS_KEY || '';
 const HMAC_SECRET = process.env.HMAC_SECRET || 'change-me-in-production';
 const TURNSTILE_SECRET = process.env.TURNSTILE_SECRET_KEY || '';
 const REAL_REDIRECT = process.env.REAL_REDIRECT || 'https://www.win04.xyz/?type=0&cid=402&a=x';
@@ -59,24 +59,27 @@ function generateFakeToken() {
 // IP 类型检测
 // ============================================
 async function checkIPType(ip) {
+  // ipapi.is: 1000 req/day free, 返回 is_datacenter/is_vpn/is_proxy/is_tor
+  // https://ipapi.is/ — API: GET /?q=IP&key=KEY
+  if (!IPAPI_IS_KEY) {
+    // 无 key 时跳过检查（开发模式）
+    return 'passed';
+  }
   try {
-    const resp = await fetch(`https://ipinfo.io/${ip}?token=${IPINFO_TOKEN}`);
+    const url = `https://api.ipapi.is?q=${encodeURIComponent(ip)}&key=${encodeURIComponent(IPAPI_IS_KEY)}`;
+    const resp = await fetch(url);
+    if (!resp.ok) {
+      console.log(`[verify] ipapi.is HTTP ${resp.status}`);
+      return 'passed'; // 网络错误时放行
+    }
     const data = await resp.json();
-    const org = (data.org || '').toLowerCase();
-    const hostname = (data.hostname || '').toLowerCase();
-
-    const blockedPatterns = [
-      'hosting', 'cloud', 'server', 'datacenter', 'vps', 'aws',
-      'google', 'microsoft', 'digital ocean', 'vpn', 'proxy',
-      'cdn', 'hostinger', 'linode', 'contabo', 'oracle',
-      'OVH', 'scaleway', 'digitalocean'
-    ];
-    for (const p of blockedPatterns) {
-      if (org.includes(p) || hostname.includes(p)) return 'blocked';
+    // 任一为 true → 数据中心/VPN/代理/TOR = bot
+    if (data.is_datacenter || data.is_vpn || data.is_proxy || data.is_tor || data.is_abuser) {
+      return 'blocked';
     }
     return 'passed';
   } catch (e) {
-    console.log('[verify] IP check error:', e.message);
+    console.log('[verify] ipapi.is error:', e.message);
     return 'passed'; // 网络问题时放行（避免误杀）
   }
 }
@@ -226,6 +229,6 @@ app.get('/health', (req, res) => {
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`[verify-api] Running on port ${PORT}`);
-  console.log(`[verify-api] IPINFO_TOKEN: ${IPINFO_TOKEN.substring(0, 8)}...`);
+  console.log(`[verify-api] IPAPI_IS_KEY: ${IPAPI_IS_KEY ? IPAPI_IS_KEY.substring(0, 8) + '...' : 'NOT SET'}`);
   console.log(`[verify-api] HMAC_SECRET: ${HMAC_SECRET.substring(0, 8)}...`);
 });
