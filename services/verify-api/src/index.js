@@ -138,9 +138,17 @@ async function runChecks(req) {
     correctAnswer    // 提交答案时有，静默验证时无
   } = req.body || {};
 
-  // 静默验证：页面加载后立即发起（无答案），跳过 L6 答题时间检验
-  // 用户提交：有点击动作，不跳过 L6
+  // 静默验证：页面加载后立即发起（无答案）
+  // 用户提交：有点击动作
   const isSilent = (answer === undefined && correctAnswer === undefined);
+
+  // L6: 答题时间
+  // 静默验证：前端传 answerTimeMs = Date.now() - pageLoadTime（页面打开到发请求的时间）
+  // 真人：Turnstile渲染需要1-5秒，answerTimeMs 自然 >2000ms
+  // Bot：可能在500ms内完成所有渲染+验证，answerTimeMs < 2000ms → 拦截
+  if (answerTimeMs <= 2000) {
+    return { pass: false, reason: 'too_fast', token: generateFakeToken() };
+  }
 
   console.log(`[verify] IP=${clientIP} mobile=${isMobile} touch=${touchEventsCount} time=${answerTimeMs}`);
 
@@ -171,8 +179,9 @@ async function runChecks(req) {
     return { pass: false, reason: 'no_interaction', token: generateFakeToken() };
   }
 
-  // L6: 答题时间（静默验证时跳过，因为页面刚加载还没看题）
-  if (!isSilent && answerTimeMs <= 2000) {
+  // L6: 答题时间（静默验证时前端传 pageLoadTime，用户提交时传用户答题时间）
+  // 阈值 2000ms：Bot 500ms 内完成，真人 Turnstile 渲染 1-5 秒必然 > 2000ms
+  if (answerTimeMs <= 2000) {
     return { pass: false, reason: 'too_fast', token: generateFakeToken() };
   }
 
