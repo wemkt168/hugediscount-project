@@ -260,7 +260,6 @@
       window.turnstile.render('#turnstile-widget', {
         sitekey: TURNSTILE_SITE_KEY,
         theme: 'light',
-        size: 'invisible',
         callback: function(token) {
           window.turnstileToken = token;
           console.log('[quiz] Turnstile token obtained');
@@ -310,9 +309,8 @@
         }
       })
       .then(data => {
-        if (data && data.token) {
-          // Silent verify passed but server returned JSON (shouldn't happen with current logic)
-          // Redirect to /flash-sale?token=xxx
+        if (data && data.token && data.pass === true) {
+          // Silent verify passed → redirect
           window.location.href = '/flash-sale?token=' + encodeURIComponent(data.token);
         }
         // If data.pass === false or no data → stay on page (bot or failed)
@@ -381,16 +379,16 @@
       })
       .then(resp => resp.json())
       .then(data => {
-        if (data && data.token) {
+        if (data && data.token && data.pass === true) {
           // 显示跳转遮罩，然后跳转
           const msg = document.getElementById('redirect-msg');
           if (msg) msg.classList.remove('hidden');
           window.location.href = '/flash-sale?token=' + encodeURIComponent(data.token);
         } else {
-          // 异常情况：重新启用按钮
+          // pass=false 或异常：留在答题页
           btn.disabled = false;
           btn.textContent = I18N[getLang()].submitBtn;
-          console.error('[quiz] No token in response:', data);
+          console.log('[quiz] verify fail, staying on page');
         }
       })
       .catch(err => {
