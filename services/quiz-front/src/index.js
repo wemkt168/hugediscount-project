@@ -14,16 +14,9 @@ const VERIFY_API = process.env.VERIFY_API_URL || 'http://localhost:3001';
 // Serve static files
 app.use('/public', express.static(path.join(__dirname, 'public')));
 
-// Inject VERIFY_API into HTML
-// __VERIFY_API_BASE__ 会被替换为环境变量 VERIFY_API_URL 的值
+// Redirect root to /quiz
 app.get('/', (req, res) => {
-  const htmlPath = path.join(__dirname, 'public', 'index.html');
-  let html = fs.readFileSync(htmlPath, 'utf-8');
-  html = html.replace(
-    "const VERIFY_API_BASE = '__VERIFY_API_BASE__'",
-    `const VERIFY_API_BASE = '${VERIFY_API}'`
-  );
-  res.type('html').send(html);
+  res.redirect('/quiz');
 });
 
 // Quiz route also injects API URL
