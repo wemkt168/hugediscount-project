@@ -30,6 +30,36 @@ app.get('/quiz', (req, res) => {
   res.type('html').send(html);
 });
 
+// Proxy /r to patile for HMAC redirect
+// Forward x-forwarded-for so patile sees real client IP for HMAC validation
+app.get('/r', async (req, res) => {
+  const token = req.query.token;
+  if (!token) return res.status(400).send('Missing token');
+
+  try {
+    const url = `${VERIFY_API}/r?token=${encodeURIComponent(token)}`;
+    const headers = { ...req.headers };
+    headers['x-forwarded-for'] = req.ip || req.connection.remoteAddress;
+    delete headers['host'];
+    delete headers['content-length'];
+
+    const resp = await fetch(url, {
+      method: 'GET',
+      headers,
+      redirect: 'manual'
+    });
+
+    const location = resp.headers.get('location');
+    if (location) {
+      return res.redirect(302, location);
+    }
+    return res.status(502).send('No redirect from patile');
+  } catch (e) {
+    console.error('[quiz-front] /r proxy error:', e.message);
+    return res.status(502).send('Proxy error');
+  }
+});
+
 // SPA fallback
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
