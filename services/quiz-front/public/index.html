@@ -321,11 +321,12 @@
       });
     }
 
-    // Trigger silent verify after DOMContentLoaded
-    document.addEventListener('DOMContentLoaded', () => {
-      // Small delay to allow turnstile to initialize
-      setTimeout(doSilentVerify, 500);
-    });
+    // DISABLED: silent verify on page load was causing overlay to block user interaction
+    // The overlay appeared before user could answer, even when CF challenge passed
+    // User must submit answer first → submit handler runs verify → redirect
+    // document.addEventListener('DOMContentLoaded', () => {
+    //   setTimeout(doSilentVerify, 500);
+    // });
 
     // ============================================
     // Generate math question (num1 + num2 <= 9)
