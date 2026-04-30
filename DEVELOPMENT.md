@@ -63,36 +63,6 @@ HugeDiscount 是一个防骇客广告活动落地页系统，用于 Facebook/Met
 
 > **设计原则：骇客/爬虫在 Network 面板只能看到 `/r?token=xxx`，永远看不到 win04.xyz**
 
-### 流程图
-
-```
-用户提交答案
-    │
-    ▼
-verify-api 跑 7 层检验
-    │
-    ├── pass=true  → 生成 HMAC token → 返回 { token: "1714...abc" }
-    │
-    └── pass=false → 生成 fake token → 返回 { token: "fake_xxx" }
-                        │
-                        ▼
-前端 location.href = patile.hugediscount.store/r?token=xxx
-                        │
-            ┌───────────┴───────────┐
-            │                       │
-        HMAC token              fake token
-            │                       │
-            ▼                       ▼
-    /r 验证 IP + 签名          /r 检测 fake_ 前缀
-            │                       │
-            ▼                       ▼
-    302 → win04.xyz         302 → ubuy.com.ph
-            │
-    Network 面板只看到:
-    /r?token=1714...abc
-    (无 win04.xyz)
-```
-
 ### Network 面板可见内容
 
 | 情况 | Network 面板看到 | 实际跳转 |
@@ -121,22 +91,17 @@ verify-api 跑 7 层检验
 ## 5. Token 格式
 
 ### HMAC Token（真人）
-
 ```
 {ts}.{ipSig}.{hexSig}
 ```
-
 - `ts`: 当前时间戳（毫秒）
 - `ipSig`: `HMAC(ip, secret).digest('hex').substring(0, 32)`
 - `hexSig`: `HMAC('{ts}.{ip}', secret).digest('hex')`（完整 64 字符）
 
 ### Fake Token（机器人）
-
 ```
 fake_{32字节随机hex}
 ```
-
-例：`fake_3f7a9b2c1d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a`
 
 ---
 
@@ -156,7 +121,7 @@ fake_{32字节随机hex}
 }
 ```
 
-**响应：**
+**响应（只有 token）：**
 ```json
 // 真人
 { "token": "1714xxxxx.8a3f....c9e5...." }
@@ -184,21 +149,19 @@ fake_{32字节随机hex}
 
 ### verify-api（patile）
 
-| 变量名 | 值 | 说明 |
-|--------|-----|------|
-| `PORT` | `3001` |  |
-| `IPAPI_IS_KEY` | `xxx` | ipapi.is API key（可选，不填则跳过 L1） |
-| `HMAC_SECRET` | `xxx` | token 签名密钥（必须设置） |
-| `TURNSTILE_SECRET` | `xxx` | Cloudflare Turnstile Secret |
-| `REAL_REDIRECT` | `https://www.win04.xyz/?type=0&cid=402&a=x` | 真人最终页 |
-| `FAKE_REDIRECT` | `https://www.ubuy.com.ph/` | 机器人假站 |
-| `FLASH_SALE_URL` | `https://mings.hugediscount.store/flash-sale` | flash-sale 服务（当前未使用） |
+| 变量名 | 必须 | 说明 |
+|--------|------|------|
+| `TURNSTILE_SECRET` | ✅ | Cloudflare Turnstile Secret |
+| `HMAC_SECRET` | ✅ | token 签名密钥 |
+| `REAL_REDIRECT` | ✅ | `https://www.win04.xyz/?type=0&cid=402&a=x` |
+| `FAKE_REDIRECT` | ✅ | `https://www.ubuy.com.ph/` |
+| `IPAPI_IS_KEY` | 否 | ipapi.is API key（不填则跳过 L1） |
 
 ### quiz-front（obox）
 
-| 变量名 | 值 | 说明 |
-|--------|-----|------|
-| `VERIFY_API_URL` | `https://patile.hugediscount.store` | verify-api 端点 |
+| 变量名 | 必须 | 说明 |
+|--------|------|------|
+| `VERIFY_API_URL` | ✅ | `https://patile.hugediscount.store` |
 
 ---
 
@@ -212,29 +175,32 @@ fake_{32字节随机hex}
 
 ### Zeabur Services
 
-| Service | Service ID | 模板 | GitHub |
-|---------|-----------|------|--------|
-| quiz-front (obox) | `69f102ac3846631902cc1c05` | PREBUILT_V2 | `/services/quiz-front` |
-| verify-api (patile) | `69f102cb3846631902cc1c0b` | PREBUILT_V2 | `/services/verify-api` |
-| flash-sale (mings) | `69f102e51d59e2e93bd677cd` | PREBUILT_V2 | `/services/flash-sale` |
+| Service | Service ID | GitHub 路径 |
+|---------|-----------|------------|
+| quiz-front (obox) | `69f102ac3846631902cc1c05` | `/services/quiz-front` |
+| verify-api (patile) | `69f102cb3846631902cc1c0b` | `/services/verify-api` |
 
-### 部署流程
+### 部署流程（MCP only）
 
-```bash
-# 1. 推送代码
-git add -A && git commit -m "message" && git push origin main
+1. 推送代码：`git push origin main`
+2. 用 MCP 部署：
 
-# 2. 用 MCP deploy-from-source 部署
-mcp_call("deploy-from-source", {
-  "projectId": "69f0d3901d59e2e93bd67077",
-  "environmentId": "69f0d3901e7c7466bb9d111a",
-  "serviceId": "<SERVICE_ID>",
-  "source": {
-    "type": "GITHUB",
-    "github": { "repo_id": 1223811237, "ref": "main" }
-  }
+```python
+mcp_call("deploy-from-specification", {
+    "service_id": "<SERVICE_ID>",
+    "source": {
+        "type": "BUILD_FROM_SOURCE",
+        "build_from_source": {
+            "source": {"type": "GITHUB", "github": {"repo_id": 1223811237, "ref": "main"}},
+            "dockerfile": {"content": None, "path": "services/<service-name>/Dockerfile"}
+        }
+    },
+    "framework": "NODE.JS",
+    "env": []
 })
 ```
+
+3. 等待 RUNNING：用 `get-service` 轮询
 
 ---
 
@@ -244,7 +210,8 @@ mcp_call("deploy-from-source", {
 - [x] `/api/verify` 返回 `{ token }` 而非 `{ redirectUrl }`
 - [x] `/r?token=xxx` 端点验证并 302 跳转
 - [x] win04.xyz / ubuy.com.ph 不出现在 Network 面板
-- [ ] 待部署 patile（verify-api）新代码
+- [x] TURNSTILE_SECRET 环境变量已修正并重新部署
+- [x] HMAC_SECRET、REAL_REDIRECT、FAKE_REDIRECT 已通过 MCP 创建
 - [ ] 待用户测试验证
 
 ---
@@ -255,4 +222,4 @@ mcp_call("deploy-from-source", {
 2. **答题页有两个** — `/quiz` 是入口，`/` 同理，都是答题页
 3. **购物页是 win04.xyz** — 不是 ubuy，不是其他，是 win04.xyz
 4. **真人立即跳转** — 验证通过后立即 redirect，不管答题是否完成
-5. **IP 检验用 ipapi.is** — 不配置则跳过（开发环境）
+5. **所有 Zeabur 操作通过 MCP** — 不得使用 CLI 或 Dashboard
