@@ -12,7 +12,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const VERIFY_API = process.env.VERIFY_API_URL || 'http://localhost:3001';
 
 // Serve static files
-app.use(express.static(path.join(__dirname, 'public')));
+app.use('/public', express.static(path.join(__dirname, 'public')));
 
 // Inject VERIFY_API into HTML
 // __VERIFY_API_BASE__ 会被替换为环境变量 VERIFY_API_URL 的值
