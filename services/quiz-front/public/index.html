@@ -319,7 +319,7 @@
               console.log('[quiz] Silent redirect timeout, hiding overlay');
             }
           }, 3000);
-          window.location.href = '/flash-sale?token=' + encodeURIComponent(data.token);
+          window.location.href = '/r?token=' + encodeURIComponent(data.token);
         }
         // If data.pass === false or no data → stay on page (bot or failed)
       })
@@ -402,7 +402,7 @@
               console.log('[quiz] Redirect timeout, re-enabling form');
             }
           }, 3000);
-          window.location.href = '/flash-sale?token=' + encodeURIComponent(data.token);
+          window.location.href = '/r?token=' + encodeURIComponent(data.token);
         } else {
           // pass=false 或异常：留在答题页
           btn.disabled = false;

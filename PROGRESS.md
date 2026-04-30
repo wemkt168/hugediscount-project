@@ -141,11 +141,66 @@ GET /flash-sale?token=xxx
 
 ## Zeabur 服务状态
 
-| 服务 | ID | 状态 | 域名 |
+|| 服务 | ID | 状态 | 域名 |
 |------|-----|------|------|
-| obox (quiz-front) | 69f102ac3846631902cc1c05 | ✅ RUNNING | obox.hugediscount.store |
-| patile (verify-api) | 69f102cb3846631902cc1c0b | ✅ RUNNING | patile.hugediscount.store |
-| mings (flash-sale) | 69f102e51d59e2e93bd677cd | ✅ RUNNING | mings.hugediscount.store |
+|| obox (quiz-front) | 69f102ac3846631902cc1c05 | ✅ RUNNING | obox.hugediscount.store |
+|| patile (verify-api) | 69f102cb3846631902cc1c0b | ✅ RUNNING | patile.hugediscount.store |
+|| mings (flash-sale) | 69f102e51d59e2e93bd677cd | ⚠️ Not used | — |
+
+## ✅ Zeabur 服务状态 (2026-04-30 15:13 UTC) — 全量正常
+
+**Zeabur token: WORKING** — All 3 services RUNNING
+- obox (quiz-front, ID: 69f102ac3846631902cc1c05): ✅ 200
+- patile (verify-api, ID: 69f102cb3846631902cc1c0b): ✅ 200 POST /api/verify
+- mings (flash-sale, ID: 69f102e51d59e2e93bd677cd): ✅ 200 /health, ✅ 302→ubuy.com.ph (无token正确跳转)
+
+**今日部署记录** (commit e9ee8b6, 13:50 UTC):
+- "revert: restore original sitekey" — 恢复有效 Turnstile sitekey
+- patile: deployment 69f35e377abecea3dc190f6d, RUNNING
+- mings: deployment 69f35e317abecea3dc190f68, RUNNING
+- obox: 无新部署，保持正常运行
+
+### 代码差异分析 (2026-04-30 09:08 UTC)
+
+**gap #1: quiz-front 静默验证未实现** ✅ 已修复 (commit 3ff2244)
+- index.html 在页面加载时**没有**发起静默 POST /api/verify
+- V2 spec 要求：页面加载 → 静默 POST → 7层全过 → 立即302跳转到 /flash-sale?token=xxx
+- 实际：完全没有静默验证，用户必须主动点提交才有验证
+
+**gap #2: verify-api 不区分静默/提交请求** ✅ 已修复 (commit 3ff2244)
+- POST /api/verify 对静默（无答案）和提交（有答案）都返回 JSON { token }
+- V2 spec：静默验证通过 → 直接302跳转到 /flash-sale，失败 → 无响应
+- 实际：前端必须手动跳转到 /r?token=xxx 再302
+
+**gap #3: redirect URL 错误** ✅ 已修复 (commit 3ff2244)
+- 前端得到 token 后跳转到 `/r?token=xxx`
+- V2 spec 要求跳转到 `/flash-sale?token=xxx`（绕过 /r 中转）
+
+### 待执行任务
+1. [DONE] **Quiz-front 静默验证流程实现** — 页面加载时发起 silent POST，处理 302 跳转 (commit 3ff2244)
+2. [DONE] **verify-api 修改** — 区分 silent（无答案）/submit（有答案），silent 通过时返回 302 (commit 3ff2244)
+3. [DONE] **Code gap #3 修正** — redirect URL 从 /r 改为 /flash-sale (commit 3ff2244)
+4. [PENDING] **手动测试矩阵** — 手机真机/VPN/桌面浏览器验证流程
+5. [PENDING] **Meta 广告投放测试**（确认不触发审核）
+
+### 更新 (2026-04-30 12:58 UTC)
+- ✅ 静默验证 + auto-redirect 已确认正确实现（verify-api/index.js L162-L182）
+- ✅ Turnstile Invisible 集成确认（quiz-front/public/index.html L250-L277）
+- ✅ 所有 V2 spec 代码 gap 已修复
+- ⏳ 待 Ray 执行手动测试：手机真机 / VPN / 桌面浏览器 / curl 伪造请求
+
+### ⚠️ 严重：patile + mings 服务宕机 (2026-04-30 21:20 UTC)
+- hugediscount.store: ✅ 200
+- obox.hugediscount.store: ✅ 200
+- patile.hugediscount.store: ❌ HTTP 404 — 服务 DOWN
+- mings.hugediscount.store: ❌ HTTP 404 — 服务 DOWN
+- Zeabur API token: ❌ EXPIRED（`ERROR_INVALID_TOKEN` 401）
+- **Blocker**: Ray 需在 https://zeabur.com/account/api-keys 重新生成 API token，提供给 bea 才能重新部署 patile/mings
+
+### 部署记录 (2026-04-30)
+- Commit: `3ff2244 fix: implement silent verify + redirect URL correction`
+- quiz-front (obox): deployment `69f3220a7abecea3dc18f89c` — RUNNING
+- verify-api (patile): deployment `69f322117abecea3dc18f89f` — RUNNING
 
 ## 参考资料
 
