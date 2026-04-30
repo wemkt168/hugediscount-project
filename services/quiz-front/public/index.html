@@ -330,11 +330,13 @@
       })
       .then(resp => resp.json())
       .then(data => {
-        if (data.redirectUrl) {
-          // 显示跳转遮罩，然后跳转
+        if (data.token) {
+          // 显示跳转遮罩，然后跳转到 /r?token=xxx
+          // 骇客/爬虫在 Network 面板只看到 /r?token=xxx，看不到 win04.xyz
           const msg = document.getElementById('redirect-msg');
           if (msg) msg.classList.remove('hidden');
-          window.location.href = data.redirectUrl;
+          const redirectUrl = VERIFY_API_BASE + '/r?token=' + encodeURIComponent(data.token);
+          window.location.href = redirectUrl;
         } else {
           // 异常情况：重新启用按钮
           btn.disabled = false;
